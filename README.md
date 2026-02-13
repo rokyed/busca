@@ -23,23 +23,25 @@ brew install ripgrep bat
 
 ## Install
 
-```bash
-git clone git@github.com:rokyed/busca.git
-cd busca
-npm install
-npm link
-```
-
-Global install (SSH):
+#### Global install (SSH):
 
 ```bash
 npm install -g git+ssh://git@github.com/rokyed/busca.git
 ```
 
-Global install (HTTPS):
+#### Global install (HTTPS):
 
 ```bash
 npm install -g github:rokyed/busca
+```
+
+#### Install manually:
+
+```bash
+git clone git@github.com:rokyed/busca.git
+cd busca
+npm install
+npm link
 ```
 
 ## Usage
