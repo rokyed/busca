@@ -13,13 +13,12 @@ Fast terminal search TUI powered by `ripgrep`.
 - Node.js (v18+ recommended)
 - npm
 - `rg` (`ripgrep`) (required)
-- `fzf` (optional)
 - `bat` (optional, for syntax-highlighted preview)
 
 Homebrew (macOS/Linux) example:
 
 ```bash
-brew install ripgrep fzf bat
+brew install ripgrep bat
 ```
 
 ## Install
