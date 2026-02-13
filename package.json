@@ -1,0 +1,16 @@
+{
+  "name": "busca",
+  "version": "1.0.0",
+  "description": "Very fast and powerful search.",
+  "license": "MIT",
+  "author": "Andrei Bazavan (rokyed@gmail.com)",
+  "type": "commonjs",
+  "main": "bin/busca.js",
+  "bin": {
+    "busca": "bin/busca.js"
+  },
+  "scripts": {
+    "start": "node bin/busca.js",
+    "test": "node --check bin/busca.js"
+  }
+}
