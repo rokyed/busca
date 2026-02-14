@@ -2,6 +2,10 @@
 
 Fast terminal search TUI powered by `ripgrep`.
 
+## Preview
+
+![busca preview](./howto.gif)
+
 ## What It Does
 
 - `rg` term panel: case-insensitive search across both file content and file names.
