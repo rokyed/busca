@@ -20,13 +20,14 @@ const {
 } = require("./constants");
 
 function runApp(argv = process.argv.slice(2)) {
-  const { searchRoot } = parseArgs(argv);
+  const { searchRoot, maxResults, maxBatBytes } = parseArgs(argv);
   const root = validatePath(searchRoot);
   ensureDependencies();
   const hasBat = hasCommand("bat");
 
   const fileCache = new Map();
-  const MAX_RG_MATCHES = 50000;
+  const MAX_RG_MATCHES = maxResults;
+  const MAX_BAT_BYTES = maxBatBytes;
   const RG_LIVE_REFRESH_MS = 40;
   const RG_LIVE_BATCH = 120;
   const state = {
@@ -115,7 +116,7 @@ function runApp(argv = process.argv.slice(2)) {
     let batAllowed = false;
     try {
       const stat = fs.statSync(key);
-      batAllowed = stat.isFile() && stat.size <= 2 * 1024 * 1024;
+      batAllowed = stat.isFile() && stat.size <= MAX_BAT_BYTES;
     } catch {
       batAllowed = false;
     }

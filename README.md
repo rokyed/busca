@@ -49,4 +49,6 @@ npm link
 ```bash
 busca
 busca /path/to/project
+busca -h
+busca /path/to/project --max-results 100000 --max-bat-bytes 4194304
 ```
