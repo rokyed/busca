@@ -97,6 +97,24 @@ function runApp(argv = process.argv.slice(2)) {
     return state.filtered[clamp(state.selected, 0, state.filtered.length - 1)];
   }
 
+  function isLikelyBinary(buffer) {
+    if (!buffer || buffer.length === 0) {
+      return false;
+    }
+    const sample = buffer.subarray(0, Math.min(buffer.length, 8192));
+    if (sample.includes(0)) {
+      return true;
+    }
+    let suspicious = 0;
+    for (let i = 0; i < sample.length; i += 1) {
+      const b = sample[i];
+      if (b < 7 || (b > 13 && b < 32) || b === 127) {
+        suspicious += 1;
+      }
+    }
+    return suspicious / sample.length > 0.3;
+  }
+
   function loadFileLines(filePath) {
     const key = path.resolve(root, filePath);
     if (fileCache.has(key)) {
@@ -104,11 +122,18 @@ function runApp(argv = process.argv.slice(2)) {
     }
     let plain = [""];
     let color = null;
+    let isBinary = false;
     try {
-      const content = fs.readFileSync(key, "utf8");
-      plain = content.split(/\r?\n/);
-      if (plain.length === 0) {
-        plain = [""];
+      const buffer = fs.readFileSync(key);
+      if (isLikelyBinary(buffer)) {
+        isBinary = true;
+        plain = ["[binary file]"];
+      } else {
+        const content = buffer.toString("utf8");
+        plain = content.split(/\r?\n/);
+        if (plain.length === 0) {
+          plain = [""];
+        }
       }
     } catch {
       plain = ["[unable to read file]"];
@@ -122,7 +147,7 @@ function runApp(argv = process.argv.slice(2)) {
       batAllowed = false;
     }
 
-    if (hasBat && batAllowed && plain[0] !== "[unable to read file]") {
+    if (hasBat && batAllowed && !isBinary && plain[0] !== "[unable to read file]") {
       const result = spawnSync(
         "bat",
         ["--color=always", "--style=plain", "--paging=never", "--", key],
