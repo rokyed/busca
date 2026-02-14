@@ -4,7 +4,7 @@ Fast terminal search TUI powered by `ripgrep`.
 
 ## What It Does
 
-- `rg` term panel: case-insensitive source search.
+- `rg` term panel: case-insensitive search across both file content and file names.
 - fuzzy panel: narrows matches by file, line, and content.
 - preview panel: navigate with `hjkl`/arrows, visual select with `v`.
 

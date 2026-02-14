@@ -38,6 +38,7 @@ function printHelp() {
     "",
     "Behavior:",
     "  - rg search is case-insensitive and runs with --no-ignore.",
+    "  - one rg input searches both content and file names at the same time.",
     "  - press Enter in rg field to run search.",
     "  - fuzzy field narrows matches by file:line:text.",
     "",

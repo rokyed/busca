@@ -55,6 +55,7 @@ function runApp(argv = process.argv.slice(2)) {
   let inAltScreen = false;
   let rgSearchSeq = 0;
   let rgProcess = null;
+  let rgFileProcess = null;
 
   function normalizePreviewRange() {
     if (!state.previewAnchor) {
@@ -243,7 +244,11 @@ function runApp(argv = process.argv.slice(2)) {
     if (rgProcess && !rgProcess.killed) {
       rgProcess.kill("SIGTERM");
     }
+    if (rgFileProcess && !rgFileProcess.killed) {
+      rgFileProcess.kill("SIGTERM");
+    }
     rgProcess = null;
+    rgFileProcess = null;
     if (!term) {
       state.status = "RG term is empty.";
       applyFuzzyFilter();
@@ -255,30 +260,18 @@ function runApp(argv = process.argv.slice(2)) {
     applyFuzzyFilter();
     render();
 
-    const child = spawn(
-      "rg",
-      [
-        "-i",
-        "--no-ignore",
-        "--json",
-        "--line-number",
-        "--column",
-        "--no-heading",
-        "--color=never",
-        "--",
-        term,
-        ".",
-      ],
-      { cwd: state.root, stdio: ["ignore", "pipe", "pipe"] },
-    );
-    rgProcess = child;
-
+    const termLower = term.toLowerCase();
     let stdoutRemainder = "";
+    let fileStdoutRemainder = "";
     let stderrText = "";
     let capped = false;
     let liveDirty = false;
     let liveBatch = 0;
     let liveTimer = null;
+    let contentDone = false;
+    let filesDone = false;
+    let errorStatus = "";
+    const filenameSeen = new Set();
 
     function flushLive() {
       if (seq !== rgSearchSeq || !liveDirty) {
@@ -301,7 +294,83 @@ function runApp(argv = process.argv.slice(2)) {
       }, RG_LIVE_REFRESH_MS);
     }
 
-    child.stdout.on("data", (chunk) => {
+    function pushMatch(match) {
+      if (seq !== rgSearchSeq || capped) {
+        return;
+      }
+      state.allMatches.push(match);
+      liveDirty = true;
+      liveBatch += 1;
+      if (liveBatch >= RG_LIVE_BATCH) {
+        if (liveTimer) {
+          clearTimeout(liveTimer);
+          liveTimer = null;
+        }
+        flushLive();
+      } else {
+        scheduleLive();
+      }
+      if (state.allMatches.length >= MAX_RG_MATCHES) {
+        capped = true;
+        if (rgProcess && !rgProcess.killed) {
+          rgProcess.kill("SIGTERM");
+        }
+        if (rgFileProcess && !rgFileProcess.killed) {
+          rgFileProcess.kill("SIGTERM");
+        }
+      }
+    }
+
+    function pushFilenameMatch(filePath) {
+      if (!filePath) {
+        return;
+      }
+      if (!filePath.toLowerCase().includes(termLower)) {
+        return;
+      }
+      if (filenameSeen.has(filePath)) {
+        return;
+      }
+      filenameSeen.add(filePath);
+      const marker = "[file name match]";
+      const display = `${filePath}:1:1: ${marker}`;
+      pushMatch({
+        file: filePath,
+        line: 1,
+        col: 1,
+        text: marker,
+        display,
+        targetLower: display.toLowerCase(),
+      });
+    }
+
+    function finishIfDone() {
+      if (seq !== rgSearchSeq || !contentDone || !filesDone) {
+        return;
+      }
+      if (liveTimer) {
+        clearTimeout(liveTimer);
+        liveTimer = null;
+      }
+      if (capped) {
+        state.status = `rg matches capped at ${MAX_RG_MATCHES}`;
+      } else if (errorStatus) {
+        state.status = errorStatus;
+      } else {
+        state.status = `rg matches: ${state.allMatches.length}`;
+      }
+      applyFuzzyFilter();
+      render();
+    }
+
+    const contentProc = spawn(
+      "rg",
+      ["-i", "--no-ignore", "--json", "--line-number", "--column", "--no-heading", "--color=never", "--", term, "."],
+      { cwd: state.root, stdio: ["ignore", "pipe", "pipe"] },
+    );
+    rgProcess = contentProc;
+
+    contentProc.stdout.on("data", (chunk) => {
       if (seq !== rgSearchSeq) {
         return;
       }
@@ -312,23 +381,8 @@ function runApp(argv = process.argv.slice(2)) {
         stdoutRemainder = stdoutRemainder.slice(nl + 1);
         const match = parseRgMatchLine(raw);
         if (match) {
-          state.allMatches.push(match);
-          liveDirty = true;
-          liveBatch += 1;
-          if (liveBatch >= RG_LIVE_BATCH) {
-            if (liveTimer) {
-              clearTimeout(liveTimer);
-              liveTimer = null;
-            }
-            flushLive();
-          } else {
-            scheduleLive();
-          }
-          if (state.allMatches.length >= MAX_RG_MATCHES) {
-            capped = true;
-            if (!child.killed) {
-              child.kill("SIGTERM");
-            }
+          pushMatch(match);
+          if (capped) {
             break;
           }
         }
@@ -336,65 +390,115 @@ function runApp(argv = process.argv.slice(2)) {
       }
     });
 
-    child.stderr.on("data", (chunk) => {
-      if (seq !== rgSearchSeq) {
+    contentProc.stderr.on("data", (chunk) => {
+      if (seq !== rgSearchSeq || stderrText.length >= 8192) {
         return;
       }
-      if (stderrText.length < 8192) {
-        stderrText += chunk.toString("utf8");
-        if (stderrText.length > 8192) {
-          stderrText = stderrText.slice(0, 8192);
-        }
+      stderrText += chunk.toString("utf8");
+      if (stderrText.length > 8192) {
+        stderrText = stderrText.slice(0, 8192);
       }
     });
 
-    child.on("error", (err) => {
+    contentProc.on("error", (err) => {
       if (seq !== rgSearchSeq) {
         return;
       }
-      if (liveTimer) {
-        clearTimeout(liveTimer);
-        liveTimer = null;
-      }
-      if (rgProcess === child) {
+      if (rgProcess === contentProc) {
         rgProcess = null;
       }
-      state.status = `rg failed: ${err.message}`;
-      applyFuzzyFilter();
-      render();
+      if (!errorStatus) {
+        errorStatus = `rg failed: ${err.message}`;
+      }
+      contentDone = true;
+      finishIfDone();
     });
 
-    child.on("close", (code) => {
+    contentProc.on("close", (code) => {
       if (seq !== rgSearchSeq) {
         return;
       }
-      if (liveTimer) {
-        clearTimeout(liveTimer);
-        liveTimer = null;
-      }
-      if (rgProcess === child) {
+      if (rgProcess === contentProc) {
         rgProcess = null;
       }
 
       const tail = stdoutRemainder.trim();
-      if (tail && !capped && state.allMatches.length < MAX_RG_MATCHES) {
+      if (tail) {
         const match = parseRgMatchLine(tail);
         if (match) {
-          state.allMatches.push(match);
-          liveDirty = true;
+          pushMatch(match);
         }
       }
 
-      if (capped) {
-        state.status = `rg matches capped at ${MAX_RG_MATCHES}`;
-      } else if (![0, 1].includes(code || 0)) {
+      if (![0, 1].includes(code || 0) && !errorStatus && !capped) {
         const details = cleanTerm(stderrText);
-        state.status = details || `rg exited with status ${code}`;
-      } else {
-        state.status = `rg matches: ${state.allMatches.length}`;
+        errorStatus = details || `rg exited with status ${code}`;
       }
-      applyFuzzyFilter();
-      render();
+      contentDone = true;
+      finishIfDone();
+    });
+
+    const fileProc = spawn("rg", ["--files", "--no-ignore", "."], { cwd: state.root, stdio: ["ignore", "pipe", "pipe"] });
+    rgFileProcess = fileProc;
+
+    fileProc.stdout.on("data", (chunk) => {
+      if (seq !== rgSearchSeq) {
+        return;
+      }
+      fileStdoutRemainder += chunk.toString("utf8");
+      let nl = fileStdoutRemainder.indexOf("\n");
+      while (nl !== -1) {
+        const raw = fileStdoutRemainder.slice(0, nl).replace(/\r$/, "");
+        fileStdoutRemainder = fileStdoutRemainder.slice(nl + 1);
+        pushFilenameMatch(raw);
+        if (capped) {
+          break;
+        }
+        nl = fileStdoutRemainder.indexOf("\n");
+      }
+    });
+
+    fileProc.stderr.on("data", (chunk) => {
+      if (seq !== rgSearchSeq || stderrText.length >= 8192) {
+        return;
+      }
+      stderrText += chunk.toString("utf8");
+      if (stderrText.length > 8192) {
+        stderrText = stderrText.slice(0, 8192);
+      }
+    });
+
+    fileProc.on("error", (err) => {
+      if (seq !== rgSearchSeq) {
+        return;
+      }
+      if (rgFileProcess === fileProc) {
+        rgFileProcess = null;
+      }
+      if (!errorStatus) {
+        errorStatus = `rg file scan failed: ${err.message}`;
+      }
+      filesDone = true;
+      finishIfDone();
+    });
+
+    fileProc.on("close", (code) => {
+      if (seq !== rgSearchSeq) {
+        return;
+      }
+      if (rgFileProcess === fileProc) {
+        rgFileProcess = null;
+      }
+      const tail = fileStdoutRemainder.trim();
+      if (tail) {
+        pushFilenameMatch(tail);
+      }
+      if (![0, 1].includes(code || 0) && !errorStatus && !capped) {
+        const details = cleanTerm(stderrText);
+        errorStatus = details || `rg file scan exited with status ${code}`;
+      }
+      filesDone = true;
+      finishIfDone();
     });
   }
 
@@ -591,7 +695,14 @@ function runApp(argv = process.argv.slice(2)) {
     const rgLines = [
       renderInput("rg> ", state.rgTerm, state.rgCursor, state.focus === "rg", innerWidth),
     ];
-    out.push(...framePanel(`RG ${rgFocus} | Enter run rg -i`, rgLines, panelWidth, state.focus === "rg"));
+    out.push(
+      ...framePanel(
+        `RG ${rgFocus} | Enter run rg -i (content + file names)`,
+        rgLines,
+        panelWidth,
+        state.focus === "rg",
+      ),
+    );
 
     const fuzzyFocus = state.focus === "fzf" ? "ACTIVE" : "";
     const fuzzyLines = [];
@@ -703,9 +814,14 @@ function runApp(argv = process.argv.slice(2)) {
   }
 
   function handleFieldInput(kind, str, key) {
-    const isRg = kind === "rg";
-    const textKey = isRg ? "rgTerm" : "fuzzyTerm";
-    const cursorKey = isRg ? "rgCursor" : "fuzzyCursor";
+    let textKey = "fuzzyTerm";
+    let cursorKey = "fuzzyCursor";
+    let applyFilterOnChange = true;
+    if (kind === "rg") {
+      textKey = "rgTerm";
+      cursorKey = "rgCursor";
+      applyFilterOnChange = false;
+    }
     const text = state[textKey];
     const cursor = state[cursorKey];
 
@@ -713,7 +829,7 @@ function runApp(argv = process.argv.slice(2)) {
       if (cursor > 0) {
         state[textKey] = text.slice(0, cursor - 1) + text.slice(cursor);
         state[cursorKey] = cursor - 1;
-        if (!isRg) {
+        if (applyFilterOnChange) {
           applyFuzzyFilter();
         }
       }
@@ -722,7 +838,7 @@ function runApp(argv = process.argv.slice(2)) {
     if (key.ctrl && key.name === "u") {
       state[textKey] = "";
       state[cursorKey] = 0;
-      if (!isRg) {
+      if (applyFilterOnChange) {
         applyFuzzyFilter();
       }
       return;
@@ -746,7 +862,7 @@ function runApp(argv = process.argv.slice(2)) {
     if (str && !key.ctrl && !key.meta && str >= " ") {
       state[textKey] = text.slice(0, cursor) + str + text.slice(cursor);
       state[cursorKey] = cursor + str.length;
-      if (!isRg) {
+      if (applyFilterOnChange) {
         applyFuzzyFilter();
       }
     }
@@ -756,6 +872,10 @@ function runApp(argv = process.argv.slice(2)) {
     if (rgProcess && !rgProcess.killed) {
       rgProcess.kill("SIGTERM");
       rgProcess = null;
+    }
+    if (rgFileProcess && !rgFileProcess.killed) {
+      rgFileProcess.kill("SIGTERM");
+      rgFileProcess = null;
     }
     if (process.stdin.isTTY) {
       process.stdin.setRawMode(false);
