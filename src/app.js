@@ -27,6 +27,8 @@ function runApp(argv = process.argv.slice(2)) {
 
   const fileCache = new Map();
   const MAX_RG_MATCHES = 50000;
+  const RG_LIVE_REFRESH_MS = 40;
+  const RG_LIVE_BATCH = 120;
   const state = {
     root,
     focus: "rg",
@@ -273,6 +275,30 @@ function runApp(argv = process.argv.slice(2)) {
     let stdoutRemainder = "";
     let stderrText = "";
     let capped = false;
+    let liveDirty = false;
+    let liveBatch = 0;
+    let liveTimer = null;
+
+    function flushLive() {
+      if (seq !== rgSearchSeq || !liveDirty) {
+        return;
+      }
+      liveDirty = false;
+      liveBatch = 0;
+      state.status = `rg searching... ${state.allMatches.length}`;
+      applyFuzzyFilter();
+      render();
+    }
+
+    function scheduleLive() {
+      if (seq !== rgSearchSeq || liveTimer) {
+        return;
+      }
+      liveTimer = setTimeout(() => {
+        liveTimer = null;
+        flushLive();
+      }, RG_LIVE_REFRESH_MS);
+    }
 
     child.stdout.on("data", (chunk) => {
       if (seq !== rgSearchSeq) {
@@ -286,6 +312,17 @@ function runApp(argv = process.argv.slice(2)) {
         const match = parseRgMatchLine(raw);
         if (match) {
           state.allMatches.push(match);
+          liveDirty = true;
+          liveBatch += 1;
+          if (liveBatch >= RG_LIVE_BATCH) {
+            if (liveTimer) {
+              clearTimeout(liveTimer);
+              liveTimer = null;
+            }
+            flushLive();
+          } else {
+            scheduleLive();
+          }
           if (state.allMatches.length >= MAX_RG_MATCHES) {
             capped = true;
             if (!child.killed) {
@@ -314,6 +351,10 @@ function runApp(argv = process.argv.slice(2)) {
       if (seq !== rgSearchSeq) {
         return;
       }
+      if (liveTimer) {
+        clearTimeout(liveTimer);
+        liveTimer = null;
+      }
       if (rgProcess === child) {
         rgProcess = null;
       }
@@ -326,6 +367,10 @@ function runApp(argv = process.argv.slice(2)) {
       if (seq !== rgSearchSeq) {
         return;
       }
+      if (liveTimer) {
+        clearTimeout(liveTimer);
+        liveTimer = null;
+      }
       if (rgProcess === child) {
         rgProcess = null;
       }
@@ -335,6 +380,7 @@ function runApp(argv = process.argv.slice(2)) {
         const match = parseRgMatchLine(tail);
         if (match) {
           state.allMatches.push(match);
+          liveDirty = true;
         }
       }
 
