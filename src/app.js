@@ -214,7 +214,8 @@ function runApp(argv = process.argv.slice(2)) {
       col = Number(item.data.submatches[0].start || 0) + 1;
     }
     const text = String(item.data.lines && item.data.lines.text ? item.data.lines.text : "").replace(/\r?\n$/, "");
-    const display = `${file}:${lineNo}:${col}: ${text}`;
+    const normalizedText = expandTabs(text).replace(/\x1b\[[0-9;]*m/g, "").replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
+    const display = `${file}:${lineNo}:${col}: ${normalizedText}`;
     return {
       file,
       line: lineNo,
