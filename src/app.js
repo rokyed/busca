@@ -552,15 +552,9 @@ function runApp(argv = process.argv.slice(2)) {
       return;
     }
     const previewBody = layout.previewBodyRows;
-    if (state.previewCursorLine < state.previewTop) {
-      state.previewTop = state.previewCursorLine;
-    }
-    if (state.previewCursorLine >= state.previewTop + previewBody) {
-      state.previewTop = state.previewCursorLine - previewBody + 1;
-    }
-    if (state.previewTop < 0) {
-      state.previewTop = 0;
-    }
+    const maxTop = Math.max(state.previewLines.length - previewBody, 0);
+    const centerOffset = Math.floor(previewBody / 2);
+    state.previewTop = clamp(state.previewCursorLine - centerOffset, 0, maxTop);
 
     if (state.selected < state.listTop) {
       state.listTop = state.selected;
